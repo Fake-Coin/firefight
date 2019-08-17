@@ -13,7 +13,7 @@ import (
 )
 
 // HitCooldown determins how long a hit player has to dispute.
-const HitCooldown = 5 * time.Minute
+const HitCooldown = 2 * time.Minute
 
 type Player struct {
 	ID    string // Slack ID of player
