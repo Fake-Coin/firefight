@@ -12,12 +12,19 @@ import (
 	"time"
 )
 
-// HitCooldown determins how long a hit player has to dispute.
-const HitCooldown = 2 * time.Minute
+const (
+	// HitCooldown determins how long a hit player has to dispute.
+	HitCooldown = 2 * time.Minute
+
+	// DefensiveCooldown determins how long before a player can register a hit.
+	DefensiveCooldown = 5 * time.Minute
+)
 
 type Player struct {
 	ID    string // Slack ID of player
 	Score int
+
+	DefensiveTimeout time.Time
 
 	HitTimeout time.Time
 	HitBy      *Player // Attacking player. Used to decrement score when disputed.
@@ -26,11 +33,12 @@ type Player struct {
 
 func (p *Player) MarshalJSON() ([]byte, error) {
 	v := struct {
-		ID         string
-		Score      int
-		Hit        bool
-		HitByID    string `json:",omitempty"`
-		HitTimeout string `json:",omitempty"`
+		ID               string
+		Score            int
+		Hit              bool
+		HitByID          string `json:",omitempty"`
+		HitTimeout       string `json:",omitempty"`
+		DefensiveTimeout string `json:",omitempty"`
 	}{
 		ID:    p.ID,
 		Score: p.Score,
@@ -43,6 +51,10 @@ func (p *Player) MarshalJSON() ([]byte, error) {
 
 	if !p.HitTimeout.IsZero() {
 		v.HitTimeout = p.HitTimeout.Format(time.RFC1123)
+	}
+
+	if !p.DefensiveTimeout.IsZero() && time.Now().Before(p.DefensiveTimeout) {
+		v.DefensiveTimeout = p.DefensiveTimeout.Format(time.RFC1123)
 	}
 
 	return json.Marshal(v)
@@ -94,18 +106,18 @@ func (pl PlayerList) findTargetAfter(index int) (tindex int, cooldown bool) {
 }
 
 // findHuntedBy returns the next hunter array index for a player.
-func (pl PlayerList) findHuntedBy(index int) (hindex int, cooldown bool) {
+func (pl PlayerList) findHuntedBy(index int) int {
 	pCount := len(pl)
 	for i := 1; i < pCount; i++ {
-		hindex = (((index - i) % pCount) + pCount) % pCount
+		hindex := (((index - i) % pCount) + pCount) % pCount
 
 		hunter := pl[hindex]
 		if !hunter.Hit {
-			return hindex, false
+			return hindex
 		}
 	}
 
-	return -1, false // no hunters remaining
+	return -1 // no hunters remaining
 }
 
 func rngSeed() int64 {
@@ -163,7 +175,7 @@ func (ff *FireFight) MarshalJSON() ([]byte, error) {
 	ff.mu.RLock()
 	defer ff.mu.RUnlock()
 
-	var aliveCount, deadCount, disputableCount int
+	var aliveCount, deadCount, disputableCount, defendedCount int
 	for _, p := range ff.Players {
 		if p.Hit {
 			deadCount++
@@ -172,11 +184,14 @@ func (ff *FireFight) MarshalJSON() ([]byte, error) {
 			}
 		} else {
 			aliveCount++
+			if now.Before(p.DefensiveTimeout) {
+				defendedCount++
+			}
 		}
 	}
 
 	type Stats struct {
-		Alive, Dead, Disputable, Total int
+		Alive, Dead, Disputable, Defended, Total int
 	}
 
 	v := struct {
@@ -191,6 +206,7 @@ func (ff *FireFight) MarshalJSON() ([]byte, error) {
 			Alive:      aliveCount,
 			Dead:       deadCount,
 			Disputable: disputableCount,
+			Defended:   defendedCount,
 			Total:      len(ff.Players),
 		},
 		Players: ff.Players,
@@ -322,6 +338,8 @@ func (ff *FireFight) GetTarget(id string) (*Player, error) {
 
 // ReportHit marks next target of play with 'id' (attacker) as hit.
 func (ff *FireFight) ReportHit(id string) (*Player, error) {
+	now := time.Now()
+
 	ff.mu.Lock()
 	defer ff.mu.Unlock()
 
@@ -337,8 +355,15 @@ func (ff *FireFight) ReportHit(id string) (*Player, error) {
 		return nil, errors.New("You can't win if you don't play.")
 	}
 
-	if ff.Players[index].Hit {
+	player := &ff.Players[index]
+
+	if player.Hit {
 		return nil, errors.New("Martyrdom isn't a perk. You're dead.")
+	}
+
+	if now.Before(player.DefensiveTimeout) {
+		d := player.DefensiveTimeout.Sub(now).Truncate(1 * time.Second)
+		return nil, fmt.Errorf("In defensive cooldown. Can't attack. [%s]", d)
 	}
 
 	tindex, cooldown := ff.Players.findTargetAfter(index)
@@ -350,17 +375,50 @@ func (ff *FireFight) ReportHit(id string) (*Player, error) {
 	target := &ff.Players[tindex]
 
 	if cooldown {
-		d := time.Until(target.HitTimeout).Truncate(1 * time.Second)
+		d := target.HitTimeout.Sub(now).Truncate(1 * time.Second)
 		return nil, fmt.Errorf("Slow down there, hotshot. [%s]", d)
 	}
 
-	target.HitTimeout = time.Now().Add(HitCooldown)
+	target.HitTimeout = now.Add(HitCooldown)
 	target.HitBy = &ff.Players[index]
 	target.Hit = true
 
-	ff.Players[index].Score++
+	player.Score++
 
 	return target, nil
+}
+
+// Defend player with 'id' with a hunter cooldown.
+func (ff *FireFight) Defend(id string) (*Player, error) {
+	ff.mu.Lock()
+	defer ff.mu.Unlock()
+
+	switch ff.State {
+	case StateIdle:
+		return nil, errors.New("No active game.")
+	case StatePaused:
+		return nil, errors.New("Game is paused.")
+	}
+
+	index := ff.Players.findByID(id)
+	if index == -1 {
+		return nil, errors.New("Not in game.")
+	}
+
+	if ff.Players[index].Hit {
+		return nil, errors.New("You've already been hit. Can't defend.")
+	}
+
+	hindex := ff.Players.findHuntedBy(index)
+
+	if hindex == -1 {
+		return nil, errors.New("Not being hunted.")
+	}
+
+	hunter := &ff.Players[hindex]
+	hunter.DefensiveTimeout = time.Now().Add(DefensiveCooldown)
+
+	return hunter, nil
 }
 
 // DisputeHit revives player if within the cooldown period.

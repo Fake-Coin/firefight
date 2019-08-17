@@ -122,3 +122,34 @@ func DisputeHit(w http.ResponseWriter, r *http.Request) {
 		log.Println("[DisputeHit]", err)
 	}
 }
+
+func DefendAttack(w http.ResponseWriter, r *http.Request) {
+	ff, ok := r.Context().Value("fire_fight").(*FireFight)
+	if !ok {
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	scmd, ok := r.Context().Value("slack_cmd").(*SlackCmd)
+	if !ok {
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	var data SlackResponse
+	if _, err := ff.Defend(scmd.UserID); err != nil {
+		data = SlackResponse{Type: "ephemeral", Text: err.Error()}
+	} else {
+		data = SlackResponse{
+			Type: "in_channel",
+
+			// Likely don't want to reveal if the defence was correct?
+			Text: fmt.Sprintf("<@%s> defended an attack.", scmd.UserID),
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		log.Println("[DefendAttack]", err)
+	}
+}

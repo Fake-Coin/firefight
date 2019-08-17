@@ -108,6 +108,7 @@ func main() {
 	endpoint.HandleFunc(pat.Post("/fftarget"), firefight.Target)
 	endpoint.HandleFunc(pat.Post("/ffhit"), firefight.ReportHit)
 	endpoint.HandleFunc(pat.Post("/ffdispute"), firefight.DisputeHit)
+	endpoint.HandleFunc(pat.Post("/ffdefended"), firefight.DefendAttack)
 
 	endpoint.HandleFunc(pat.Post("/ffscore"), firefight.Scoreboard)
 
@@ -152,6 +153,7 @@ const helpText = `/endpoint/ffstart
 /endpoint/fftarget
 /endpoint/ffhit
 /endpoint/ffdispute
+/endpoint/ffdefended
 /endpoint/ffscore
 `
 
