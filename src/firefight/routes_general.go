@@ -73,7 +73,7 @@ func End(w http.ResponseWriter, r *http.Request) {
 		var finalScores strings.Builder
 		finalScores.WriteString("[FireFight Scoreboard]\n")
 		for i, p := range players {
-			finalScores.WriteString(fmt.Sprintf("#%d: % 2dpts - <@%s>\n", i, p.Score, p.ID))
+			finalScores.WriteString(fmt.Sprintf("#%d: % 2dpts - <@%s>\n", i+1, p.Score, p.ID))
 		}
 
 		data = SlackResponse{Type: "in_channel", Text: finalScores.String()}
@@ -102,7 +102,7 @@ func Scoreboard(w http.ResponseWriter, r *http.Request) {
 			status = "fragged"
 		}
 
-		topPlayers.WriteString(fmt.Sprintf("#%d: % 2dpts - <@%s> (%s)\n", i, p.Score, p.ID, status))
+		topPlayers.WriteString(fmt.Sprintf("#%d: % 2dpts - <@%s> (%s)\n", i+1, p.Score, p.ID, status))
 	}
 
 	data := SlackResponse{Type: "ephemeral", Text: topPlayers.String()}
