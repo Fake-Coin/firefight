@@ -93,6 +93,21 @@ func (pl PlayerList) findTargetAfter(index int) (tindex int, cooldown bool) {
 	return -1, false // no targets remaining
 }
 
+// findHuntedBy returns the next hunter array index for a player.
+func (pl PlayerList) findHuntedBy(index int) (hindex int, cooldown bool) {
+	pCount := len(pl)
+	for i := 1; i < pCount; i++ {
+		hindex = (((index - i) % pCount) + pCount) % pCount
+
+		hunter := pl[hindex]
+		if !hunter.Hit {
+			return hindex, false
+		}
+	}
+
+	return -1, false // no hunters remaining
+}
+
 func rngSeed() int64 {
 	var b [8]byte
 	crand.Read(b[:])
